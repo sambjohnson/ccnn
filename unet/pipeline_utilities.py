@@ -648,7 +648,8 @@ def freesurfer_subject_data_exists(sub_dir, mesh_files, data_files,
 
 def get_freesurfer_subject_with_parc(sub_dir, mesh_files, data_files,
                                      surf_dir='surf',
-                                     label_files=None):
+                                     label_files=None,
+                                     label_dir='label'):
     """ Given a subject's freesurfer directory, loads
         each freesurfer file in both mesh_files and map_files, and returns
         their nilearn objects in a dictionary {'name': nilearn_object}.
@@ -662,6 +663,10 @@ def get_freesurfer_subject_with_parc(sub_dir, mesh_files, data_files,
                 files of interest. Defaults to 'surf'.
             label_files: list<str> names of label files to load from the /label dir.
                 Defaults to Destrieux parcellation, lh.aparc.a2009s.annot
+            label_dir: (str, optional) Subdirectory of subject's freesurfer directory
+                from which to load label_files. Defaults to 'label/'. This
+                parameter is useful when dealing with e.g., labels organized
+                in subdirectories of label/, such as label/manual_label/
         Returns:
             a dictionary {'name': nilearn_object} of each loaded object; names
             are the same as specified in mesh_files and map_files.
@@ -669,8 +674,10 @@ def get_freesurfer_subject_with_parc(sub_dir, mesh_files, data_files,
     if label_files is None:
         label_files = ['lh.aparc.a2009s.annot']
     surf_dict = get_freesurfer_subject(sub_dir, mesh_files, data_files)
-    label_dict = get_freesurfer_subject(sub_dir, mesh_files=None,
-                                        data_files=label_files, surf_dir='label')
+    label_dict = get_freesurfer_subject(sub_dir,
+                                        mesh_files=None,
+                                        data_files=label_files,
+                                        surf_dir=label_dir)
     surf_dict.update(label_dict)
     return surf_dict
 
