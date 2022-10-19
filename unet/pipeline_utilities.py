@@ -15,9 +15,25 @@ from PIL import ImageOps
 
 from PIL import Image
 from PIL import ImageOps
+# define default matplotlib palette
+from matplotlib import cm
+from matplotlib import colors
 
 
+### GLOBAL VARIABLES ###
+
+# coordinate ranges
 RANGES = [60.0, 150.0, 100.0]
+
+# default palette
+tab20 = cm.get_cmap('tab20')
+tab20_colors = 255 * np.array(tab20.colors)
+PAL = np.concatenate(([[255., 255., 255.]], tab20_colors))
+
+# alternate palette for OTS labels
+OTS_CMAP = colors.ListedColormap(['blue', 'green', 'yellow', 'red', 'purple'])
+ots_colors = np.array([colors.to_rgb(c) for c in OTS_CMAP.colors])
+PAL_OTS = np.concatenate(([[1.0, 1.0, 1.0]], ots_colors))
 
 
 def make_random_angles(n, center, scale):
@@ -171,13 +187,10 @@ def process_parc_img(img, pal=None, img_out_fp=None, newsize=256, shifts=None):
             the resulting np array of shape (newsize, newsize,)
             with values in the range 0, pal.shape[0] - 1
     """
-    # define default matplotlib palette
-    from matplotlib import cm
-    tab20 = cm.get_cmap('tab20')
-    tab20_colors = 255 * np.array(tab20.colors)
-    PAL = np.concatenate(([[255., 255., 255.]], tab20_colors))
-    if pal is None:
+    if (pal is None) or (pal == 'default'):
         pal = PAL
+    elif pal == 'OTS':
+        pal = PAL_OTS
 
     img = img.resize((newsize, newsize))
     img_channel = to_channel_img(img, pal)
@@ -425,7 +438,7 @@ def stitch_channels(np_dict, key_list, return_key_name='np_x', inplace=True):
 
     np_xs = []
     for i, a in enumerate(angles):
-        np_ch0 = np_dict['curv'][i]
+        np_curv = np_dict['curv'][i]
         np_mask = np_dict['mask'][i]
 
         np_x = stitch_nps(np_curv, np_mask)  # create single np array
@@ -724,8 +737,6 @@ def make_subject_coord_images(mesh, figs=None, a=None, figsize=(8, 8)):
     if a is None:
         a = [210.0, 90.0]
 
-    RANGES = [60.0, 150.0, 100.0]
-
     coord_figs = []
     for i in range(3):  # one image per coordinate (x, y, z)
 
@@ -753,7 +764,8 @@ def make_subject_images(mesh, curv, parc, extra_channels_dict=None,
                         nangles=20,
                         nonrandom_angles=None,
                         make_coord_figs=True,
-                        make_mask_figs=True
+                        make_mask_figs=True,
+                        mode=None
                         ):
     """ Main image-generation function for UNet input images.
         Arguments:
@@ -786,7 +798,10 @@ def make_subject_images(mesh, curv, parc, extra_channels_dict=None,
 
     FIGSIZE = (8, 8)
     DESTRIEUX_LABELS = [2, 19, 21, 23, 24, 25, 30, 37, 38, 50, 51, 57, 58, 59, 60, 61, 63, 65]
-    selected_parc = np.array([DESTRIEUX_LABELS.index(l) if l in DESTRIEUX_LABELS else -1 for l in parc])
+    if mode is None:
+        selected_parc = np.array([DESTRIEUX_LABELS.index(l) if l in DESTRIEUX_LABELS else -1 for l in parc])
+    else:
+        selected_parc = parc
 
     parc_figs = []
     curv_figs = []
@@ -806,18 +821,35 @@ def make_subject_images(mesh, curv, parc, extra_channels_dict=None,
     for a in angles:
 
         # plot parcellation
-        parc_fig, _ = plt.subplots(figsize=FIGSIZE)
-        plotting.plot_surf_roi(mesh, selected_parc
-                               , view=(a[0], a[1])
-                               # ,bg_map=test_curv
-                               # ,bg_on_data=True
-                               , figure=parc_fig
-                               , cmap='tab20'
-                               # , output_file=parc_save_fp
-                               # ,threshold=25.0
-                               # colorbar=True
-                               )
-        parc_figs.append(parc_fig)
+        if mode is None:
+            parc_fig, _ = plt.subplots(figsize=FIGSIZE)
+            plotting.plot_surf_roi(mesh, selected_parc
+                                   , view=(a[0], a[1])
+                                   # ,bg_map=test_curv
+                                   # ,bg_on_data=True
+                                   , figure=parc_fig
+                                   , cmap='tab20'
+                                   # , output_file=parc_save_fp
+                                   # ,threshold=25.0
+                                   # colorbar=True
+                                   )
+            parc_figs.append(parc_fig)
+        elif mode == 'OTS':
+            parc_fig, _ = plt.subplots(figsize=FIGSIZE)
+            plotting.plot_surf_roi(mesh, selected_parc
+                                   , view=(a[0], a[1])
+                                   # ,bg_map=test_curv
+                                   # ,bg_on_data=True
+                                   , figure=parc_fig
+                                   , cmap=OTS_CMAP
+                                   , vmin=1.0
+                                   , vmax=6.0
+                                   # , output_file=parc_save_fp
+                                   # ,threshold=25.0
+                                   # colorbar=True
+                                   )
+            parc_figs.append(parc_fig)
+
 
         # plot curvature
         above_parc_threshold = selected_parc.max() + 1.0  # set threshold to exclude parc
@@ -833,6 +865,7 @@ def make_subject_images(mesh, curv, parc, extra_channels_dict=None,
                                )
         curv_figs.append(curv_fig)
 
+        # plot mask figures if desired
         if make_mask_figs:
             curv_mask = np.zeros_like(curv)
             curv_mask[curv > 0] = 1.0
@@ -888,7 +921,7 @@ def make_subject_images(mesh, curv, parc, extra_channels_dict=None,
     return return_dict
 
 
-def process_figs(img_dict, ns=256):
+def process_figs(img_dict, ns=256, mode=None):
     """ Processes images in preparation for UNet.
         Several successive steps are applied.
         1. Downsampling
@@ -903,7 +936,9 @@ def process_figs(img_dict, ns=256):
                     stat_map channels.
                 vals: lists of images of the corresponding modality. Each
                     list entry should be a different view of the same subject.
-                ns: (int, optional) new pixel size of downsampled square image.
+            ns: (int, optional) new pixel size of downsampled square image.
+            mode: either None or 'OTS', specifying which image input is to
+                processed via process_parc_img.
         Returns:
             npy_dict: dictionary with the same keys, each a list of the processed
                 input plt figures. The figures are processed by downsampling,
@@ -916,6 +951,8 @@ def process_figs(img_dict, ns=256):
                          'ycoord': process_coord_img,
                          'zcoord': process_coord_img
                          }
+    if mode == 'OTS':
+        PROCESS_FUNCTIONS['parc'] = lambda img: process_parc_img(img, pal='OTS')
     DEFAULT_CHANNEL_FUNCTION = process_curv_img
     npy_dict = {}
     npy_dict['angles'] = img_dict['angles']
