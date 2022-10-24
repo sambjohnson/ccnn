@@ -24,6 +24,7 @@ from matplotlib import colors
 
 # coordinate ranges
 RANGES = [60.0, 150.0, 100.0]
+DESTRIEUX_LABELS = [2, 19, 21, 23, 24, 25, 30, 37, 38, 50, 51, 57, 58, 59, 60, 61, 63, 65]
 
 # default palette
 tab20 = cm.get_cmap('tab20')
@@ -592,6 +593,20 @@ def make_pixel_map(xnp, ynp, znp, surf_coords, angle, ns=256,
     px2v_dict = coords_to_vertices(px_coords, surf_coords)
 
     return px_coords, px2v_dict
+
+
+def get_filtered_parc(parc, mode=None, fill_value=-1):
+    """ Filter parcellation by including only certain labels.
+        In default mode, selects only the parcellations of Destrieux
+        that are adjacent to the OTS.
+    """
+    if mode is None:
+        selected_parc = np.array([DESTRIEUX_LABELS.index(l)
+                                  if l in DESTRIEUX_LABELS
+                                  else fill_value
+                                  for l in parc]
+                                 )
+    return selected_parc
 
 
 def get_freesurfer_subject(sub_dir, mesh_files, data_files,
