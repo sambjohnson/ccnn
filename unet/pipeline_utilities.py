@@ -25,6 +25,7 @@ from matplotlib import colors
 # coordinate ranges
 RANGES = [60.0, 150.0, 100.0]
 DESTRIEUX_LABELS = [2, 19, 21, 23, 24, 25, 30, 37, 38, 50, 51, 57, 58, 59, 60, 61, 63, 65]
+DESTRIEUX_FILENAME = 'lh.aparc.a2009s.annot'
 
 # default palette
 tab20 = cm.get_cmap('tab20')
@@ -700,7 +701,7 @@ def get_freesurfer_subject_with_parc(sub_dir, mesh_files, data_files,
             are the same as specified in mesh_files and map_files.
     """
     if label_files is None:
-        label_files = ['lh.aparc.a2009s.annot']
+        label_files = [DESTRIEUX_FILENAME]
     surf_dict = get_freesurfer_subject(sub_dir, mesh_files, data_files)
     label_dict = get_freesurfer_subject(sub_dir,
                                         mesh_files=None,
@@ -731,7 +732,7 @@ def freesurfer_subject_data_exists_parc(sub_dir, mesh_files, data_files,
             are the same as specified in mesh_files and map_files.
     """
     if label_files is None:
-        label_files = ['lh.aparc.a2009s.annot']
+        label_files = [DESTRIEUX_FILENAME]
     surf_files_exist = freesurfer_subject_data_exists(sub_dir, mesh_files, data_files)
     label_files_exist = freesurfer_subject_data_exists(sub_dir, mesh_files=None,
                                                        data_files=label_files, surf_dir='label')
