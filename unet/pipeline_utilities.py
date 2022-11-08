@@ -13,6 +13,7 @@ from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 from PIL import Image
 from PIL import ImageOps
 
+import PIL
 from PIL import Image
 from PIL import ImageOps
 # define default matplotlib palette
@@ -194,7 +195,7 @@ def process_parc_img(img, pal=None, img_out_fp=None, newsize=256, shifts=None):
     elif pal == 'OTS':
         pal = PAL_OTS
 
-    img = img.resize((newsize, newsize))
+    img = img.resize((newsize, newsize), resample=PIL.Image.NEAREST)
     img_channel = to_channel_img(img, pal)
 
     if shifts is not None:
