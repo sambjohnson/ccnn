@@ -176,7 +176,8 @@ def process(image, newsize=256, grayscale=True):
 
 
 # function to process parc images into np files
-def process_parc_img(img, pal=None, img_out_fp=None, newsize=256, shifts=None):
+def process_parc_img(img, pal=None, img_out_fp=None, newsize=256, shifts=None,
+                     resample=None):
     """ Downsamples an image, converts it to a numpy array,
         resamples each pixel color to nearest color
         in a specified palette (pal),
@@ -186,6 +187,10 @@ def process_parc_img(img, pal=None, img_out_fp=None, newsize=256, shifts=None):
             pal: palette to resample to (np array of shape (nclrs, 3))
             img_out_fp: if None, output is not saved
             newsize: size to resize to (image should be square)
+            resample: (optional) resampling algorithm to use during image
+                resizing. Default (None) leads to PIL.Image.NEAREST. If
+                reample='default', then the default PIL resampling method
+                is used instead.
         Returns:
             the resulting np array of shape (newsize, newsize,)
             with values in the range 0, pal.shape[0] - 1
@@ -195,7 +200,13 @@ def process_parc_img(img, pal=None, img_out_fp=None, newsize=256, shifts=None):
     elif pal == 'OTS':
         pal = PAL_OTS
 
-    img = img.resize((newsize, newsize), resample=PIL.Image.NEAREST)
+    # downsampling logic
+    if resample is None:
+        resample = PIL.Image.NEAREST
+    elif resample == 'default':
+        resample = None
+
+    img = img.resize((newsize, newsize), resample=resample)
     img_channel = to_channel_img(img, pal)
 
     if shifts is not None:
@@ -797,7 +808,8 @@ def make_subject_images(mesh, curv, parc, extra_channels_dict=None,
             nangles: the total number of angles to generate for this subject.
             nonrandom_angles: (optional) a sequence of angles to include
                 that are not randomly generated upon calling this function.
-            make_coord_figs: (boolean) if True, 3 angles (x, y, z) will be returned for each image
+            make_coord_figs: (boolean) if True, 3 angles (x, y, z)
+                will be returned for each image
         Returns:
             A dictionary of lists of figures, dict<list<fig>>:
                 'parc': [parcellation figures]
@@ -938,7 +950,7 @@ def make_subject_images(mesh, curv, parc, extra_channels_dict=None,
     return return_dict
 
 
-def process_figs(img_dict, ns=256, mode=None):
+def process_figs(img_dict, ns=256, mode=None, resample=None):
     """ Processes images in preparation for UNet.
         Several successive steps are applied.
         1. Downsampling
@@ -956,6 +968,7 @@ def process_figs(img_dict, ns=256, mode=None):
             ns: (int, optional) new pixel size of downsampled square image.
             mode: either None or 'OTS', specifying which image input is to
                 processed via process_parc_img.
+            resample: (optional) PIL method to use for image downsampling
         Returns:
             npy_dict: dictionary with the same keys, each a list of the processed
                 input plt figures. The figures are processed by downsampling,
@@ -963,13 +976,15 @@ def process_figs(img_dict, ns=256, mode=None):
     """
     PROCESS_FUNCTIONS = {'mask': process_mask_img,
                          'curv': process_curv_img,
-                         'parc': process_parc_img,
+                         'parc': lambda img:
+                         process_parc_img(img, resample=resample),
                          'xcoord': process_coord_img,
                          'ycoord': process_coord_img,
                          'zcoord': process_coord_img
                          }
     if mode == 'OTS':
-        PROCESS_FUNCTIONS['parc'] = lambda img: process_parc_img(img, pal='OTS')
+        PROCESS_FUNCTIONS['parc'] = lambda img: \
+            process_parc_img(img, pal='OTS', resample=resample)
     DEFAULT_CHANNEL_FUNCTION = process_curv_img
     npy_dict = {}
     npy_dict['angles'] = img_dict['angles']
