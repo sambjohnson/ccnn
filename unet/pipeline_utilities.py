@@ -34,7 +34,12 @@ tab20_colors = 255 * np.array(tab20.colors)
 PAL = np.concatenate(([[255., 255., 255.]], tab20_colors))
 
 # alternate palette for OTS labels
-OTS_CMAP = colors.ListedColormap(['blue', 'green', 'yellow', 'red', 'purple'])
+OTS_CMAP = colors.ListedColormap(['blue',
+                                  'green',
+                                  'yellow',
+                                  'red',
+                                  'purple',
+                                  'pink'])
 ots_colors = np.array([colors.to_rgb(c) for c in OTS_CMAP.colors])
 PAL_OTS = np.concatenate(([[1.0, 1.0, 1.0]], ots_colors))
 
