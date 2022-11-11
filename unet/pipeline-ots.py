@@ -108,8 +108,8 @@ for sub in ots_subjects[start:end]:
     # 2. process (downsample, grayscale, extract channels) -> np array
     # 3. get px2v data from coordinate images
 
-    nangles_inner = 1
-    nangles_total = 1
+    nangles_inner = 5
+    nangles_total = 40
     nangle_iterations = nangles_total // nangles_inner
 
     for i in range(nangle_iterations):
