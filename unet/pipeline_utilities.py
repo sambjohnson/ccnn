@@ -56,7 +56,7 @@ OTS_MFS_GAP_CMAP = colors.ListedColormap(['blue',
                                          )
 ots_mfs_gap_colors = np.array([colors.to_rgb(c)
                                for c in OTS_MFS_GAP_CMAP.colors])
-PAL_OTS_MFS_GAP = np.concatenate(([[1.0, 1.0, 1.0]], ots_colors))
+PAL_OTS_MFS_GAP = np.concatenate(([[1.0, 1.0, 1.0]], ots_mfs_gap_colors))
 
 
 def make_random_angles(n, center, scale):
