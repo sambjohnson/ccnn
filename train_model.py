@@ -1,3 +1,6 @@
+import os
+import argparse
+
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -12,198 +15,164 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 
-# these are required for defining the regression ImageFolder
-from typing import Dict, Any
-from torchvision import datasets
-from torchsummary import summary
-
 import nilearn as ni
 import matplotlib.pyplot as plt
-from matplotlib import cm
-from matplotlib.colors import ListedColormap, LinearSegmentedColormap
-
-import os
 import copy
 import pickle
 import collections
 
 import numpy as np
 import pandas as pd
+from run_config import Config
 
-from PIL import Image
-from PIL import ImageOps
-from PIL import ImagePalette
-
-import nbutils
-import datetime
-import configparser
-
-# ---- DEFINE GLOBAL VARIABLES AND DIRECTORIES ---- #
 # ---- DATA LOADING ---- #
 
-# options
-train = True
-reload_parameters = True
-reload_optimizer_state = True
-warmstart = True
 
-# training parameters
-bs = 32
-nw = 3  # number of cpu's to use to parallelize dl
-pm = True  # whether to pin memory in dl
-# training proceeds along this plan, in sequential phases with different params.
-# training plan 1: multiphase, not used by default
-training_plan = [
-    dict(lr=0.00375, gamma=0.9, num_batches=int(1e4), bce_weight=0.67),
-    dict(lr=0.00250, gamma=0.9, num_batches=int(1e4), bce_weight=0.33),
-    dict(lr=0.00125, gamma=0.9, num_batches=int(1e4), bce_weight=0.00)
-]
-# training plan 2: single-phase, used by default
-training_plan_short = [dict(lr=0.00375, gamma=0.9,
-                            num_batches=int(1e5),
-                            bce_weight=0.33)]
-# optional plan 3 loaded from options in config
-custom_training_plan = [dict()]
+def main(args):
+    """
+        1. Read configuration file.
+        2. Load data from config-specified directories, and package into
+            training and validation dataloaders.
+        3. Train a model, saving incremental checkpoints.
+    """
+    # options
+    config = Config(args.config_file)
 
-# directories
-model_load_dir = './models/model_2022-10-26'
-date = str(datetime.datetime.now().date())
-model_save_dir = f'./models/model_{date}'
-os.makedirs(model_save_dir, exist_ok=True)
+    trn_df = pd.read_csv(config.trn_csv_fpath)
+    val_df = pd.read_csv(config.val_csv_fpath)
+    trn_df['Train'] = True
+    val_df['Train'] = False
+    data_df = pd.concat([trn_df, val_df])
 
-base_data_dir = '/scratch/groups/jyeatman/samjohns-projects/data/atlas/ots-sulc'
-data_prefix = 'ots'
-xsubdir = 'xs'
-ysubdir = 'ys'
-xdir = os.path.join(base_data_dir, xsubdir)
-ydir = os.path.join(base_data_dir, ysubdir)
+    out_channels = config.out_channels
+    agg_dict = config.agg_dict
 
-trn_csv_fpath = f'{base_data_dir}/{data_prefix}_sulc_mapping_trn.csv'
-val_csv_fpath = f'{base_data_dir}/{data_prefix}_sulc_mapping_val.csv'
+    trf = transforms.Compose([transforms.ToTensor(),
+                              dlutil.data.ToFloat()])
+    target_trf = transforms.Compose([transforms.ToTensor(),
+                                     dlutil.data.ToLong()])
 
-trn_df = pd.read_csv(trn_csv_fpath)
-val_df = pd.read_csv(val_csv_fpath)
+    xdir = config.xdir
+    ydir = config.ydir
 
-trn_df['Train'] = True
-val_df['Train'] = False
-data_df = pd.concat([trn_df, val_df])
+    # create datasets
+    ds_trn = dlutil.data.CustomUnetDataset(xdir=xdir, ydir=ydir,
+                                           mapping_file=config.trn_csv_fpath,
+                                           transform=trf,
+                                           target_transform=target_trf,
+                                           nclasses=out_channels,
+                                           agg_dict=agg_dict)
 
-out_channels = 6
-fg_agg_dict = {0: [0], 1: list(range(1, out_channels))}
-n_agg_classes = len(fg_agg_dict)
+    ds_val = dlutil.data.CustomUnetDataset(xdir=xdir, ydir=ydir,
+                                           mapping_file=config.val_csv_fpath,
+                                           transform=trf,
+                                           target_transform=target_trf,
+                                           nclasses=out_channels,
+                                           agg_dict=agg_dict)
 
-null_agg_dict = {i: [i] for i in range(out_channels)}
-ots_agg_dict = {0: [0], 1: [1], 2: [2, 3, 4, 5]}
+    # create dataloaders
+    dl_train = DataLoader(ds_trn,
+                          batch_size=config.batch_size,
+                          shuffle=True,
+                          pin_memory=config.pin_memory,
+                          num_workers=config.num_workers_in_dataloaders)
+    dl_test = DataLoader(ds_val,
+                         batch_size=config.batch_size,
+                         shuffle=False,
+                         pin_memory=config.pin_memory,
+                         num_workers=config.num_workers_in_dataloaders)
 
-trf = transforms.Compose([transforms.ToTensor(),
-                          dlutil.data.ToFloat()])
-target_trf = transforms.Compose([transforms.ToTensor(),
-                                 dlutil.data.ToLong()])
+    # ---- DEFINE MODEL ---- #
 
-# create datasets
-ds_trn = dlutil.data.CustomUnetDataset(xdir=xdir, ydir=ydir,
-                                       mapping_file=trn_csv_fpath,
-                                       transform=trf,
-                                       target_transform=target_trf,
-                                       nclasses=out_channels,
-                                       agg_dict=ots_agg_dict)
+    # get data shape
+    xtr, ytr = next(iter(dl_train))
+    xte, yte = next(iter(dl_test))
+    in_channels = xte.shape[1]  # 0th dim is batch
+    out_channels_agg = yte.shape[1]  # 0th dim is batch
 
-ds_val = dlutil.data.CustomUnetDataset(xdir=xdir, ydir=ydir,
-                                       mapping_file=val_csv_fpath,
-                                       transform=trf,
-                                       target_transform=target_trf,
-                                       nclasses=out_channels,
-                                       agg_dict=ots_agg_dict)
+    # define model and move to device (GPU if available)
+    model = unet.UNet(feature_count=in_channels,
+                      class_count=out_channels_agg,
+                      apply_sigmoid=False)
+    device = dlutil.utils.get_device()
+    model.to(device)
 
-# create dataloaders
-dl_train = DataLoader(ds_trn, batch_size=bs, shuffle=True, pin_memory=pm)
-dl_test = DataLoader(ds_val, batch_size=bs, shuffle=False, pin_memory=pm)
+    if config.reload_parameters:
 
-# ---- DEFINE MODEL ---- #
+        cpu = (device.type == 'cpu')
+        # in case model is saved from GPU but reloaded to CPU
+        device_string = 'cuda' if not cpu else 'cpu'
+        model_state_fn, optim_state_fn = get_last_fns(config.model_load_dir)
 
-# get data shape
-xtr, ytr = next(iter(dl_train))
-xte, yte = next(iter(dl_test))
-in_channels = xte.shape[1]  # 0th dim is batch
-out_channels_agg = yte.shape[1]  # 0th dim is batch
+        # reload model state dict
+        with open(f'{config.model_load_dir}/{model_state_fn}', 'rb') as f:
+            model_reload_dict = \
+                torch.load(f, map_location=torch.device(device_string))
 
-# define model and move to device (GPU if available)
-model = unet.UNet(feature_count=in_channels,
-                  class_count=out_channels_agg,
-                  apply_sigmoid=False)
-device = dlutil.utils.get_device()
-model.to(device)
+        # reload optimizer state dict
+        with open(f'{config.model_load_dir}/{optim_state_fn}', 'rb') as f:
+            optim_reload_dict = \
+                torch.load(f, map_location=torch.device(device_string))
 
-if reload_parameters:
+    if config.warmstart:
+        params = make_warmstart_state_dict(model, model_reload_dict)
+    else:
+        params = model_reload_dict
 
-    cpu = (device.type == 'cpu')
-    # in case model is saved from GPU but reloaded to CPU
-    device_string = 'cuda' if not cpu else 'cpu'
-    model_state_fn, optim_state_fn = get_last_fns(model_load_dir)
+    model.load_state_dict(params)
 
-    # reload model state dict
-    with open(f'{model_load_dir}/{model_state_fn}', 'rb') as f:
-        model_reload_dict = torch.load(f, map_location=torch.device(device_string))
+    # freeze all but the last layer
+    dlutil.utils.set_unfreeze_(model, [model.conv_last])
+    # confirm correct freeze / unfreeze
+    assert dlutil.utils.check_requires_grad(model.conv_last) and not \
+           dlutil.utils.check_requires_grad(model.conv_up3)
 
-    # reload optimizer state dict
-    with open(f'{model_load_dir}/{optim_state_fn}', 'rb') as f:
-        optim_reload_dict = torch.load(f, map_location=torch.device(device_string))
+    # data dictionaries formatted for input to training loop
+    dl_dict = {'trn': dl_train, 'val': dl_test}
 
-if warmstart:
-    params = make_warmstart_state_dict(model, model_reload_dict)
-else:
-    params = model_reload_dict
+    # ---- TRAIN MODEL ---- #
 
-model.load_state_dict(params)
+    if config.train:
 
-# freeze all but the last layer
-dlutil.utils.set_unfreeze_(model, [model.conv_last])
-# confirm correct freeze / unfreeze
-assert dlutil.utils.check_requires_grad(model.conv_last) and not \
-       dlutil.utils.check_requires_grad(model.conv_up3)
+        for e, t in enumerate(config.training_plan):
 
-# data dictionaries formatted for input to training loop
-dl_dict = {'trn': dl_train, 'val': dl_test}
+            # unpack hyperparameters
+            lr = t['lr']
+            gamma = t['gamma']
+            bce_weight = t['bce_weight']
+            num_batches = t['num_batches']
 
-# ---- TRAIN MODEL ---- #
+            # define training objects
+            optimizer = torch.optim.Adam(
+                filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
 
-if train:
+            # initialize optimizer
+            if config.reload_optimizer_state and (e == 0):
+                optimizer.load_state_dict(optim_reload_dict)
 
-    tp = training_plan_short  # abbreviated for testing
-    for e, t in enumerate(tp):
+            # other parameters
+            step_size = len(dl_dict['trn'])
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=step_size,
+                gamma=gamma)
 
-        # unpack hyperparameters
-        lr = t['lr']
-        gamma = t['gamma']
-        bce_weight = t['bce_weight']
-        num_batches = t['num_batches']
-
-        # define training objects
-        optimizer = torch.optim.Adam(
-            filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
-
-        # initialize optimizer
-        if reload_optimizer_state and (e == 0):
-            optimizer.load_state_dict(optim_reload_dict)
-
-        # other parameters
-        step_size = len(dl_dict['trn'])
-        scheduler = torch.optim.lr_scheduler.StepLR(
-            optimizer,
-            step_size=step_size,
-            gamma=gamma)
-
-        # train loop
-        result = unet.train.train_model(model,
-                                        optimizer,
-                                        scheduler,
-                                        dl_dict,
-                                        save_path=model_save_dir,
-                                        report_every=5,
-                                        checkpoint_every=100,
-                                        logits=True,
-                                        num_batches=num_batches,
-                                        logger=None)
-        model, best_dice, best_bce, losses = result
+            # train loop
+            result = unet.train.train_model(model,
+                                            optimizer,
+                                            scheduler,
+                                            dl_dict,
+                                            save_path=config.model_save_dir,
+                                            report_every=5,
+                                            checkpoint_every=100,
+                                            logits=True,
+                                            num_batches=num_batches,
+                                            logger=None)
+            model, best_dice, best_bce, losses = result
 
 
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config_file", type=str, default=None)
+    parser.add_argument("--train", type=bool, default=True)
+    main(parser.parse_args())

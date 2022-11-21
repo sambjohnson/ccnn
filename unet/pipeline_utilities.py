@@ -25,7 +25,8 @@ from matplotlib import colors
 
 # coordinate ranges
 RANGES = [60.0, 150.0, 100.0]
-DESTRIEUX_LABELS = [2, 19, 21, 23, 24, 25, 30, 37, 38, 50, 51, 57, 58, 59, 60, 61, 63, 65]
+DESTRIEUX_LABELS = [2, 19, 21, 23, 24, 25, 30, 37, 38, 50,
+                    51, 57, 58, 59, 60, 61, 63, 65]
 DESTRIEUX_FILENAME = 'lh.aparc.a2009s.annot'
 
 # default palette
@@ -42,6 +43,20 @@ OTS_CMAP = colors.ListedColormap(['blue',
                                   'pink'])
 ots_colors = np.array([colors.to_rgb(c) for c in OTS_CMAP.colors])
 PAL_OTS = np.concatenate(([[1.0, 1.0, 1.0]], ots_colors))
+
+# alternate palette for OTS-MFS-GAP labels
+OTS_MFS_GAP_CMAP = colors.ListedColormap(['blue',
+                                          'green',
+                                          'yellow',
+                                          'red',
+                                          'purple',
+                                          'pink',
+                                          'brown',
+                                          'orange']
+                                         )
+ots_mfs_gap_colors = np.array([colors.to_rgb(c)
+                               for c in OTS_MFS_GAP_CMAP.colors])
+PAL_OTS_MFS_GAP = np.concatenate(([[1.0, 1.0, 1.0]], ots_colors))
 
 
 def make_random_angles(n, center, scale):
@@ -204,6 +219,8 @@ def process_parc_img(img, pal=None, img_out_fp=None, newsize=256, shifts=None,
         pal = PAL
     elif pal == 'OTS':
         pal = PAL_OTS
+    elif pal == 'OTS-MFS-GAP':
+        pal = PAL_OTS_MFS_GAP
 
     # downsampling logic
     if resample is None:
@@ -624,6 +641,8 @@ def get_filtered_parc(parc, mode=None, fill_value=-1):
                                   else fill_value
                                   for l in parc]
                                  )
+    else:
+        selected_parc = parc
     return selected_parc
 
 
@@ -815,6 +834,10 @@ def make_subject_images(mesh, curv, parc, extra_channels_dict=None,
                 that are not randomly generated upon calling this function.
             make_coord_figs: (boolean) if True, 3 angles (x, y, z)
                 will be returned for each image
+            mode: (string, optional) default is 'HBN', but can also be set
+                to 'OTS' or to 'OTS-MFS-GAP'. This parameter sets the color
+                palette to be used, which varies based on the type of input
+                data.
         Returns:
             A dictionary of lists of figures, dict<list<fig>>:
                 'parc': [parcellation figures]
@@ -868,16 +891,25 @@ def make_subject_images(mesh, curv, parc, extra_channels_dict=None,
                                    # colorbar=True
                                    )
             parc_figs.append(parc_fig)
-        elif mode == 'OTS':
+        else:
+            # OTS modes are similar; the MFS-GAP setting contains
+            # two additional labels, hence uses a different palette.
+            if mode == 'OTS':
+                cmap = OTS_CMAP
+                vmax = 6.0
+            if mode == 'OTS-MFS-GAP':
+                vmax = 8.0
+                cmap = OTS_MFS_GAP_CMAP
+
             parc_fig, _ = plt.subplots(figsize=FIGSIZE)
             plotting.plot_surf_roi(mesh, selected_parc
                                    , view=(a[0], a[1])
                                    # ,bg_map=test_curv
                                    # ,bg_on_data=True
                                    , figure=parc_fig
-                                   , cmap=OTS_CMAP
+                                   , cmap=cmap
                                    , vmin=1.0
-                                   , vmax=6.0
+                                   , vmax=vmax
                                    # , output_file=parc_save_fp
                                    # ,threshold=25.0
                                    # colorbar=True
@@ -891,7 +923,7 @@ def make_subject_images(mesh, curv, parc, extra_channels_dict=None,
         plotting.plot_surf_roi(mesh, selected_parc
                                , view=(a[0], a[1])
                                , bg_map=curv
-                               # ,bg_on_data=True
+                               # , bg_on_data=True
                                , figure=curv_fig
                                , cmap='tab20'
                                , threshold=above_parc_threshold
@@ -971,8 +1003,9 @@ def process_figs(img_dict, ns=256, mode=None, resample=None):
                 vals: lists of images of the corresponding modality. Each
                     list entry should be a different view of the same subject.
             ns: (int, optional) new pixel size of downsampled square image.
-            mode: either None or 'OTS', specifying which image input is to
-                processed via process_parc_img.
+            mode: (string, optional - defaults to 'HBN') or else 'OTS', or else
+                'OTS-MFS-GAP', specifying which image input is to be processed
+                via process_parc_img.
             resample: (optional) PIL method to use for image downsampling
         Returns:
             npy_dict: dictionary with the same keys, each a list of the processed
@@ -990,6 +1023,9 @@ def process_figs(img_dict, ns=256, mode=None, resample=None):
     if mode == 'OTS':
         PROCESS_FUNCTIONS['parc'] = lambda img: \
             process_parc_img(img, pal='OTS', resample=resample)
+    elif mode == 'OTS-MFS-GAP':
+        PROCESS_FUNCTIONS['parc'] = lambda img: \
+            process_parc_img(img, pal='OTS-MFS-GAP', resample=resample)
     DEFAULT_CHANNEL_FUNCTION = process_curv_img
     npy_dict = {}
     npy_dict['angles'] = img_dict['angles']
