@@ -215,12 +215,12 @@ def process_parc_img(img, pal=None, img_out_fp=None, newsize=256, shifts=None,
             the resulting np array of shape (newsize, newsize,)
             with values in the range 0, pal.shape[0] - 1
     """
-    if (pal is None) or (pal == 'default'):
-        pal = PAL
+    if pal is None:
+        palette = PAL
     elif pal == 'OTS':
-        pal = PAL_OTS
+        palette = PAL_OTS
     elif pal == 'OTS-MFS-GAP':
-        pal = PAL_OTS_MFS_GAP
+        palette = PAL_OTS_MFS_GAP
 
     # downsampling logic
     if resample is None:
@@ -229,7 +229,7 @@ def process_parc_img(img, pal=None, img_out_fp=None, newsize=256, shifts=None,
         resample = None
 
     img = img.resize((newsize, newsize), resample=resample)
-    img_channel = to_channel_img(img, pal)
+    img_channel = to_channel_img(img, pal=palette)
 
     if shifts is not None:
         img_channel = shift_single(img_channel, shifts=shifts)
