@@ -137,15 +137,13 @@ def to_channel_img(img, pal):
         Note: expects image in RGBA PNG format, e.g. image
         shape should be (x_len, y_len, 4)).
     """
-    img_np = np.array(img)
-    s = img_np.shape
+    s = img.shape
     ret_img = np.zeros(s[:-1])
-    e = np.eye(pal.shape[0])
 
     # loop over pixels
     for x in range(s[0]):
         for y in range(s[1]):
-            px_color = img_np[x, y]
+            px_color = img[x, y]
             cc = get_closest_color(px_color, pal)
             ret_img[x, y] = cc
     return ret_img
@@ -197,7 +195,7 @@ def process(image, newsize=256, grayscale=True):
 
 # function to process parc images into np files
 def process_parc_img(img, pal=None, img_out_fp=None, newsize=256, shifts=None,
-                     resample=None):
+                     resample=None, normalize=True):
     """ Downsamples an image, converts it to a numpy array,
         resamples each pixel color to nearest color
         in a specified palette (pal),
@@ -211,6 +209,10 @@ def process_parc_img(img, pal=None, img_out_fp=None, newsize=256, shifts=None,
                 resizing. Default (None) leads to PIL.Image.NEAREST. If
                 reample='default', then the default PIL resampling method
                 is used instead.
+            normalize: (Boolean, default=True, or else float value). If False,
+                no normalization will be performed. If True, normalization
+                value will be inferred to be the maximum value of the image.
+                If the value is manually provided, this is used instead.
         Returns:
             the resulting np array of shape (newsize, newsize,)
             with values in the range 0, pal.shape[0] - 1
@@ -229,6 +231,19 @@ def process_parc_img(img, pal=None, img_out_fp=None, newsize=256, shifts=None,
         resample = None
 
     img = img.resize((newsize, newsize), resample=resample)
+    img = np.array(img)
+
+    # parse normalize logic
+    if isinstance(normalize, bool):
+        if normalize:
+            norm_value = np.max(img)
+        else:
+            norm_value = 1.0
+    else:
+        if not isinstance(normalize, float):
+            raise TypeError
+        norm_value = normalize
+    img = img / norm_value
     img_channel = to_channel_img(img, pal=palette)
 
     if shifts is not None:
@@ -1022,10 +1037,10 @@ def process_figs(img_dict, ns=256, mode=None, resample=None):
                          }
     if mode == 'OTS':
         PROCESS_FUNCTIONS['parc'] = lambda img: \
-            process_parc_img(img, pal='OTS', resample=resample)
+            process_parc_img(img, pal=PAL_OTS, resample=resample)
     elif mode == 'OTS-MFS-GAP':
         PROCESS_FUNCTIONS['parc'] = lambda img: \
-            process_parc_img(img, pal='OTS-MFS-GAP', resample=resample)
+            process_parc_img(img, pal=PAL_OTS_MFS_GAP, resample=resample)
     DEFAULT_CHANNEL_FUNCTION = process_curv_img
     npy_dict = {}
     npy_dict['angles'] = img_dict['angles']
