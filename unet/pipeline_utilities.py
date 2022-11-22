@@ -223,6 +223,8 @@ def process_parc_img(img, pal=None, img_out_fp=None, newsize=256, shifts=None,
         palette = PAL_OTS
     elif pal == 'OTS-MFS-GAP':
         palette = PAL_OTS_MFS_GAP
+    else:
+        palette = pal
 
     # downsampling logic
     if resample is None:
