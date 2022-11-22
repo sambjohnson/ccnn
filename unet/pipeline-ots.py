@@ -12,9 +12,11 @@ start = int(sys.argv[1])
 end = int(sys.argv[2])
 # start, end = 0, 1  # change values during testing
 
+data_dir = '/oak/stanford/groups/jyeatman/samjohns/samjohns-projects-backup/' \
+           'data/OTS_MFS/OTS_MFS__for__Sam/'
 label_subdir = 'label/manual_label'
 surf_subdir = 'surf'
-data_dir = '/oak/stanford/groups/jyeatman/samjohns/samjohns-projects-backup/ots-data'
+
 subjects = [s for s in os.listdir(data_dir) if 'long' in s]
 subjects.sort()
 
@@ -36,15 +38,23 @@ for sub in subjects:
     for l in label_files:
         labels.append(surface.load_surf_data(os.path.join(label_dir, l)))
 
-    sub_df = pd.DataFrame({'Subject': sub, 'Filename': label_files, 'Label': labels, 'Mesh': [surf] * len(labels),
-                           'Curv': [curv] * len(labels), 'Sulc': [sulc] * len(labels)})
+    sub_df = pd.DataFrame(
+        {
+            'Subject': sub,
+            'Filename': label_files,
+            'Label': labels,
+            'Mesh': [surf] * len(labels),
+            'Curv': [curv] * len(labels),
+            'Sulc': [sulc] * len(labels)
+        }
+    )
     sub_dfs.append(sub_df)
 
 df = pd.concat(sub_dfs)
 
 all_label_files = list(df['Filename'].unique())
 all_labels = sorted([l.split('.')[1] for l in all_label_files if 'lh.' in l])
-l_inc = ['OTSa', 'OTSb', 'OTSc', 'OTSd', 'OTSe']
+l_inc = ['OTSa', 'OTSb', 'OTSc', 'OTSd', 'OTSe', 'MFS', 'pOTSgap']
 df['LabelName'] = df['Filename'].apply(lambda l: l.split('.')[1])
 df_filtered = df[df['LabelName'].isin(l_inc)]
 label_to_index = dict(zip(l_inc, list(range(2, len(l_inc) + 2))))
@@ -75,8 +85,10 @@ def get_subject_labels(sub, df):
     stat, mesh = make_subject_stat_map(sub, df)
     return mesh, stat, curv
 
-ots_dir = '/oak/stanford/groups/jyeatman/samjohns/samjohns-projects-backup/ots-data'
-save_base_dir = '/scratch/groups/jyeatman/samjohns-projects/data/atlas/ots-sulc'
+
+ots_dir = data_dir
+save_base_dir = '/scratch/groups/jyeatman/samjohns-projects/' \
+                'data/atlas/ots-mfs-sulc'
 
 save_x_subdir = 'xs'
 save_y_subdir = 'ys'
@@ -113,19 +125,28 @@ for sub in ots_subjects[start:end]:
     nangle_iterations = nangles_total // nangles_inner
 
     for i in range(nangle_iterations):
-        fig_dict = pu.make_subject_images(mesh,
-                        curv,
-                        stat,
-                        extra_channels_dict=extra_channels_dict,
-                        nangles=nangles_inner,
-                        mode='OTS')
-        np_dict = pu.process_figs(fig_dict, mode='OTS')
-        np_px_dict = pu.px2v_from_np_dict(np_dict,
-                                  mesh_coords=mesh.coordinates)
+        fig_dict = pu.make_subject_images(
+            mesh,
+            curv,
+            stat,
+            extra_channels_dict=extra_channels_dict,
+            nangles=nangles_inner,
+            mode='OTS-MFS-GAP'
+        )
+        np_dict = pu.process_figs(fig_dict, mode='OTS-MFS-GAP')
+        np_px_dict = pu.px2v_from_np_dict(
+            np_dict,
+            mesh_coords=mesh.coordinates
+        )
         plt.close('all')  # clear all matplotlib plots
-        pu.save_subject_npys(sub, np_px_dict, save_xdir, save_ydir,
-                     extra_channel_keys=['sulc'],
-                     save_px2v_dir=save_px2v_dir,
-                     save_pxcoord_dir=save_pxcoord_dir)
+        pu.save_subject_npys(
+            sub,
+            np_px_dict,
+            save_xdir,
+            save_ydir,
+            extra_channel_keys=['sulc'],
+            save_px2v_dir=save_px2v_dir,
+            save_pxcoord_dir=save_pxcoord_dir
+        )
         del np_dict
         del np_px_dict
