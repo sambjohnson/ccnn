@@ -337,6 +337,7 @@ def dice_loss(pred,
     else:
         class_weights = torch.ones(pred.shape[1])
     class_weights = class_weights / torch.sum(class_weights)
+    class_weights = class_weights.to(get_device())
 
     pred = pred.contiguous()
     gold = gold.contiguous()
@@ -410,6 +411,7 @@ def bce_loss(
         assert len(class_weights) == pred.shape[1]
         class_weights = torch.Tensor(class_weights)
         class_weights = class_weights / torch.sum(class_weights)
+        class_weights = class_weights.to(get_device())
     if logits:
         f = torch.nn.functional.binary_cross_entropy_with_logits
     else:
