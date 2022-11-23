@@ -14,6 +14,7 @@ The `visual_autolabel.util` package contains utilities for use in and with the
 # Global Config Items.
 # from .config import (default_partition, sids)  # commented out, as unnecessary.
 import torch
+import numpy as np
 
 #===============================================================================
 # Utility Functions
@@ -286,7 +287,14 @@ def is_logits(data):
     else:                  return False
 
 
-def dice_loss(pred, gold, logits=None, smoothing=1, graph=False, metrics=None):
+def dice_loss(pred,
+              gold,
+              logits=None,
+              smoothing=1,
+              graph=False,
+              class_weights=None,
+              metrics=None
+              ):
     """Returns the loss based on the dice coefficient.
     
     `dice_loss(pred, gold)` returns the dice-coefficient loss between the
@@ -308,6 +316,9 @@ def dice_loss(pred, gold, logits=None, smoothing=1, graph=False, metrics=None):
         not logits. The default is `None`.
     smoothing : number, optional
         The smoothing coefficient `s`. The default is `1`.
+    class_weights : sequence of length nclasses. If provided, this reweights
+        the importance of each class (according to its respective weight)
+        in calculating the DICE loss.
     metrics : dict or None, optional
         An optional dictionary into which the key `'dice'` should be inserted
         with the dice-loss as the value.
@@ -318,10 +329,21 @@ def dice_loss(pred, gold, logits=None, smoothing=1, graph=False, metrics=None):
         The dice-coefficient loss of the prediction.
     """
     import torch
+
+    # parse class_weights arg (e.g., ensure normalization, convert to torch)
+    if class_weights is not None:
+        assert len(class_weights) == pred.shape[1]
+        class_weights = torch.Tensor(class_weights)
+    else:
+        class_weights = torch.ones(pred.shape[1])
+    class_weights = class_weights / torch.sum(class_weights)
+
     pred = pred.contiguous()
     gold = gold.contiguous()
-    if logits is None: logits = is_logits(pred)
-    if logits: pred = torch.sigmoid(pred)
+    if logits is None:  # infer
+        logits = is_logits(pred)
+    if logits:  # user specified True
+        pred = torch.sigmoid(pred)
     intersection = (pred * gold)
     pred = pred**2
     gold = gold**2
@@ -329,17 +351,26 @@ def dice_loss(pred, gold, logits=None, smoothing=1, graph=False, metrics=None):
         intersection = intersection.sum(dim=-1)
         pred = pred.sum(dim=-1)
         gold = gold.sum(dim=-1)
-    if smoothing is None: smoothing = 0
+    if smoothing is None:
+        smoothing = 0
+    # Calculate the DICE according to the mathematical definition.
     loss = (1 - ((2 * intersection + smoothing) / (pred + gold + smoothing)))
     # Average the loss across classes then take the mean across batch elements.
-    loss = loss.mean(dim=1).mean()
+    loss = torch.matmul(loss, class_weights).mean()
     if metrics is not None:
         if 'dice' not in metrics: metrics['dice'] = 0.0
         metrics['dice'] += loss.data.cpu().numpy() * gold.size(0)
     return loss
 
 
-def bce_loss(pred, gold, logits=None, reweight=False, metrics=None):
+def bce_loss(
+    pred,
+    gold,
+    logits=None,
+    reweight=False,
+    class_weights=None,
+    metrics=None
+):
     """Returns the loss based on the binary cross entropy.
     
     `bce_loss(pred, gold)` returns the binary cross entropy loss between the
@@ -375,33 +406,52 @@ def bce_loss(pred, gold, logits=None, reweight=False, metrics=None):
     import torch
     if logits is None:
         logits = is_logits(pred)
+    if class_weights is not None:
+        assert len(class_weights) == pred.shape[1]
+        class_weights = torch.Tensor(class_weights)
+        class_weights = class_weights / torch.sum(class_weights)
     if logits:
         f = torch.nn.functional.binary_cross_entropy_with_logits
     else:
         f = torch.nn.functional.binary_cross_entropy
-    if reweight:
+    # manually weighted classes
+    if class_weights is not None:
+        r = 0
+        for k in range(pred.shape[1]):  # class dim = dim 1
+            p = pred[:, [k]]
+            t = gold[:, [k]]
+            r += f(p, t) * class_weights[k]
+    # automatically weighted classes
+    elif reweight:
         n = pred.shape[-1] * pred.shape[-2]
-        if len(pred.shape) > 3:  # multiply normalization factor by batch size if data is batched
+        # multiply normalization factor by batch size if data is batched
+        if len(pred.shape) > 3:
             n *= pred.shape[0]
         r = 0
-        for k in range(pred.shape[1]):
+        for k in range(pred.shape[1]):  # class dim = dim 1
             p = pred[:, [k]]
             t = gold[:, [k]]
             r += f(p, t) * (n - torch.sum(t)) / n
+    # no reweighting (easy)
     else:
         r = f(pred, gold)
     if metrics is not None:
-        if 'bce' not in metrics: metrics['bce'] = 0.0
+        if 'bce' not in metrics:
+            metrics['bce'] = 0.0
         metrics['bce'] += r.data.cpu().numpy() * gold.size(0)
     return r
 
 
-def loss(pred, gold,
-         logits=True,
-         bce_weight=0.5,
-         smoothing=1,
-         reweight=True,
-         metrics=None):
+def loss(
+    pred,
+    gold,
+    logits=True,
+    bce_weight=0.5,
+    smoothing=1,
+    reweight=True,
+    class_weights=None,
+    metrics=None
+):
     """Returns the weighted sum of dice-coefficient and BCE-based losses.
 
     `loss(pred, gold)` calculates the loss value between the given prediction
@@ -427,6 +477,11 @@ def loss(pred, gold,
         Whether to reweight the classes by calculating the BCE for each class
         then calculating the mean across classes. If `False`, then the raw BCE
         across all pixels, classes, and batches is returned (the default).
+    class_weights: sequence, optional
+        If provided, this list of weights allows the user to downweight /
+        upweight different prediction classes' importance in the loss. E.g.,
+        if class_weights = [w0, w1, w2], the three classes will be weighted
+        with L_total = L_class0 * w0 + L_class1 * w1 + L_class2 * w2.
     smoothing : number, optional
         The smoothing coefficient `s` to use with the dice-coefficient liss.
         The default is `1`.
@@ -449,10 +504,12 @@ def loss(pred, gold,
     bce = bce_loss(pred, gold,
                    logits=logits,
                    reweight=reweight,
+                   class_weights=class_weights,
                    metrics=metrics)
     dice = dice_loss(pred, gold,
                      logits=logits,
                      smoothing=smoothing,
+                     class_weights=class_weights,
                      metrics=metrics)
     loss = bce * bce_weight + dice * dice_weight
     if metrics is not None:

@@ -191,6 +191,7 @@ def train_model(model, optimizer, scheduler, dataloaders,
                 bce_weight=0.5,
                 loss_fn=None,
                 reweight=True,
+                class_weights=None,
                 smoothing=1):
     """Trains and returns a model based on the various optional arguments.
     
@@ -255,6 +256,10 @@ def train_model(model, optimizer, scheduler, dataloaders,
         Whether to reweight the classes by calculating the BCE for each class
         then calculating the mean across classes. If `False`, then the raw BCE
         across all pixels, classes, and batches is returned (the default).
+    class_weights: sequence, optional
+        If provided, this sequence (length of nclasses) reweights the relative
+        importances of the different classes in calculating the loss
+        (both BCE and DICE).
     smoothing : number, optional
         The smoothing coefficient `s` to use with the dice-coefficient liss.
         The default is `1`.
@@ -357,6 +362,7 @@ def train_model(model, optimizer, scheduler, dataloaders,
                                      bce_weight=bce_weight,
                                      smoothing=smoothing,
                                      reweight=reweight,
+                                     class_weights=class_weights,
                                      metrics=metrics)
                 # backward + optimize only if in training phase
                 if phase == 'trn':
