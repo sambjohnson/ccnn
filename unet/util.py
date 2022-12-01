@@ -905,9 +905,15 @@ def segment_ots(
         if a in idxs or b in idxs:
             mask_edges.append(e)
 
+    # special handling in case label is empty
+    if len(mask_edges) == 0:
+        return [], [], []
+
     mask = np.stack(mask_edges)
-    ccs = trimesh.graph.connected_components(mask)  # list<vertices> of conn. components
-    ccs = [cc for cc in ccs if cc.shape[0] >= min_size]  # filter out very small components
+    # list<vertices> of conn. components
+    ccs = trimesh.graph.connected_components(mask)
+    # filter out very small components
+    ccs = [cc for cc in ccs if cc.shape[0] >= min_size]
     cc_coordinates = [mesh.coordinates[c] for c in ccs]
     ranges = [[max(cc[:, 1]), min(cc[:, 1])] for cc in cc_coordinates]
     sizes = [cc.shape[0] for cc in ccs]
