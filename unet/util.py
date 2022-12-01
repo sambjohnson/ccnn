@@ -17,8 +17,8 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from nilearn import surface
-import pipeline_utilities as pu
-from pipeline_utilities import DESTRIEUX_FILENAME
+from . import pipeline_utilities as pu
+from .pipeline_utilities import DESTRIEUX_FILENAME
 import os
 import trimesh  # note: trimesh handles triangulations of freesurfer meshes
 
