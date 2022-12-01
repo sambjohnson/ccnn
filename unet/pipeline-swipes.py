@@ -2,6 +2,7 @@ import os
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
+import pickle
 
 from util import load_vmaps
 from pipeline_utilities import fig_to_PIL
@@ -15,12 +16,13 @@ hbn_dir = '/oak/stanford/groups/jyeatman/HBN/BIDS_curated/derivatives/freesurfer
 hbn_surf_dir = 'surf'
 hbn_parc_dir = 'label'
 anat_load_dir = hbn_dir
-vmap_load_dir = '../results/hbn_ots_vmaps_2022-11-27'
+vmap_load_dir = '/scratch/groups/jyeatman/samjohns-projects/notebooks/ccnn/results/hbn_ots_vmaps_2022-11-27'
 
-image_dir = '../results/swipes_stack'
-os.makedirs(image_dir, exist_ok=True)
+image_dir = '/scratch/groups/jyeatman/samjohns-projects/notebooks/ccnn/results/swipes_stack'
+# os.makedirs(image_dir, exist_ok=True)
+# eids = list(set([e.split('_')[-1][:-4] for e in os.listdir(vmap_load_dir)]))
 
-eids = list(set([e.split('_')[-1][:-4] for e in os.listdir(vmap_load_dir)]))
+eids = pickle.load(open('/scratch/groups/jyeatman/samjohns-projects/notebooks/ccnn/results/eids_to_do.pkl', 'rb'))
 eids.sort()  # guarantees eids are in the same order across parallel jobs
 
 for eid in eids[start:end]:
@@ -74,3 +76,4 @@ for eid in eids[start:end]:
     ax.imshow(ots_np, alpha=0.5)
     ax.set_axis_off()
     plt.savefig(f'{image_dir}/y_{eid}.png')
+    plt.close('all')
