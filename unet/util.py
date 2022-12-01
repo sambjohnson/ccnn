@@ -14,7 +14,15 @@ The `visual_autolabel.util` package contains utilities for use in and with the
 # Global Config Items.
 # from .config import (default_partition, sids)  # commented out, as unnecessary.
 import torch
+import torch.nn.functional as F
 import numpy as np
+from nilearn import surface
+import pipeline_utilities as pu
+from pipeline_utilities import DESTRIEUX_FILENAME
+import os
+import trimesh  # note: trimesh handles triangulations of freesurfer meshes
+
+
 
 #===============================================================================
 # Utility Functions
@@ -519,8 +527,397 @@ def loss(
         metrics['loss'] += loss.data.cpu().numpy() * gold.size(0)
     return loss
 
-#===============================================================================
+
+# --- POSTPROCESSING (PIXEL <-> VERTEX) UTILITIES --- #
+
+# data functions
+
+def load_pickle(fp):
+    """ Load single pickle file.
+    """
+    import pickle
+    with open(fp, 'rb') as f:
+        p = pickle.load(f)
+    return p
+
+
+def load_numpy(fp):
+    """ Load single numpy file.
+    """
+    import numpy as np
+    with open(fp, 'rb') as f:
+        n = np.load(f)
+    return n
+
+
+def load_pickle_or_numpy_batch(
+    fnames,
+    prepend_fp=None,
+    numpy=False
+):
+    """ Load a series of pickle or saved numpy files
+        into a list, and return the list.
+    """
+
+    if prepend_fp is not None:
+        fps = [os.path.join(prepend_fp, n) for n in fnames]
+    else:
+        fps = fnames
+
+    load = load_numpy if numpy else load_pickle
+
+    return [load(fp) for fp in fps]
+
+
+# vertex functions
+
+def px2vx(px_np, px2vx_dict, vcoords, ignore=None):
+    """ Translates an array of pixel-values to a statistical map
+        that lives on a cortical surface, according to
+        a supplied dictionary.
+        Arguments:
+            px_np: Array of pixel values of shape (xdim, ydim, ...)
+            px2vx_dict: Dictionary whose keys are (i, j) pixel locations
+                and whose values are lists of vertices corresponding
+                to a given pixel in a given view of a cortex.
+            vcoords: Coordinates of the cortical mesh
+            ignore: Value not to include in arrays.
+        Returns:
+            The vmap (cortex) version of the supplied px_np array
+            of pixel values.
+    """
+    vlen = vcoords.shape[0]
+    vmap_shape = tuple([vlen] + list(px_np.shape[2:]))
+    vmap = np.zeros(vmap_shape)
+    n1 = px_np.shape[0]
+    n2 = px_np.shape[1]
+    for i in range(n1):
+        for j in range(n2):
+            v = px2vx_dict[(i, j)]
+            if v != ignore:
+                vmap[v] = px_np[i, j]
+    return vmap
+
+
+def make_mask_vmap(a, b, threshold_value=2.0, method=None):
+    """ Make a mask (boolean) vmap based on which values
+        are below an allowed maximum threshold of difference
+        between pxcoords and vxcoords.
+        Arguments:
+            a, b: The two arrays to compare, of same shape
+                (n_entries, n_coordinates). Distances are calculated
+                on a sum over the coordinates (axis=1).
+            threshold_value: the maximum theshold, a positive float
+            method: how to calculate the distance to threshold,
+                by default, absolute value. Can also be 'square'
+                to calculate squared distance.
+        Returns: a boolean array in the shape of a and b
+    """
+    fn = np.abs
+    if method == 'square':
+        fn = np.square
+
+    diff_vmap = (fn(a - b)).sum(axis=1)
+    mask_vmap = (diff_vmap > threshold_value)
+
+    return mask_vmap
+
+
+# analysis functions
+
+def dice(target, prediction, target_label, pred_label=None):
+    """ Calculates DICE by comparing target to prediction.
+        'label' is the value of the label to compare.
+    """
+    if pred_label is None:
+        pred_label = target_label
+    lt = target == target_label
+    lp = prediction == pred_label
+
+    tp = sum(lt * lp)
+    fp = sum(lp) - tp
+    fn = sum(lt) - tp
+    dice = (2 * tp) / (2 * tp + fp + fn)
+
+    return dice
+
+
+def average_dice(target, prediction, labels, return_all=False):
+    dices = [dice(target, prediction, l) for l in labels]
+    if return_all:
+        return np.mean(dices), dices
+    else:
+        return np.mean(dices)
+
+
+# model prediction utilities
+def model_eval(
+    model,
+    dl,
+    df_metadata,
+    df_idxs,
+    save_dir,
+    split_size=35,
+
+):
+    """
+        Do a forward pass on a large dataset with multiple samples
+        per subject EID. Iterate through and save predictions (batched by EID)
+        as .npy files.
+    """
+    di = iter(dl)
+    model.eval()
+    device = get_device()
+
+    for batch, (xs, ys) in enumerate(di):
+        df = df_metadata.iloc[df_idxs[batch]]
+        eid = str(df.iloc[0]['EID'])
+
+        x1 = xs[:split_size]
+        oversized = xs.shape[0] > split_size
+        pred1 = model(x1.to(device))
+        pred1 = pred1.cpu().detach().numpy()
+
+        if oversized:
+            x2 = xs[split_size:]
+            pred2 = model(x2.to(device))
+            pred2 = pred2.cpu().detach().numpy()
+            pred = np.concatenate([pred1, pred2])
+        else:
+            pred = pred1
+
+        save_pred_fn = f'{save_dir}/pred_02_{eid}.npy'
+        with open(save_pred_fn, 'wb') as f:
+            np.save(f, pred)
+        print(f'Saved eid: {eid}')
+
+        del xs
+        del ys
+        del pred1
+        if oversized:
+            del pred2
+        del pred
+
+
+def batch_px2v(
+    df,
+    ind,
+    batch,
+    load_dir,
+    vcrd_dir,
+    px2v_dir,
+    anat_base_dir,
+    anat_surf_subdir,
+    anat_parc_subdir=None,
+    save_dir=None,
+    load_parc=False,
+    preds_from_file=True
+):
+    """
+        Converts a batch of predictions (grouped by subject)
+        into a collection of surface vmaps.
+        To achieve this, loads surface mesh, 2d pixelwise predictions, etc.
+    """
+
+    df_batch = df.iloc[ind[batch]]
+
+    # collect batch metadata from df
+    px2v_colname = 'Filename_v'
+    pcrd_colname = 'Filename_p'
+    px2v_fns = list(df_batch[px2v_colname])
+    pcrd_fns = list(df_batch[pcrd_colname])
+    eid = str(df_batch['EID'].iloc[0])
+
+    # load px2v maps
+    vcrd_batch = load_pickle_or_numpy_batch(pcrd_fns, vcrd_dir, numpy=True)
+    px2v_batch = load_pickle_or_numpy_batch(px2v_fns, px2v_dir)
+
+    # load freesurfer data
+    mesh_fn = 'lh.inflated'
+    curv_fn = 'lh.curv'
+
+    mesh_fp = os.path.join(anat_base_dir, eid, anat_surf_subdir, mesh_fn)
+    curv_fp = os.path.join(anat_base_dir, eid, anat_surf_subdir, curv_fn)
+
+    mesh = surface.load_surf_mesh(mesh_fp)
+    curv = surface.load_surf_data(curv_fp)
+
+    # optional extra data for loading parc, if desired
+    if load_parc:
+        parc_fn = DESTRIEUX_FILENAME
+        parc_fp = os.path.join(anat_base_dir, eid, anat_parc_subdir, parc_fn)
+
+        parc = surface.load_surf_data(parc_fp)
+        parc_selected = pu.get_filtered_parc(parc, fill_value=0.0)
+
+    if preds_from_file:
+        with open(f'{load_dir}/pred_02_{eid}.npy', 'rb') as f:
+            preds = np.load(f)
+    else:
+        raise NotImplemented
+
+    ypreds = torch.Tensor(preds)
+    ypreds_softmax = F.softmax(ypreds, dim=1)
+
+    # reshape predictions and move to numpy
+    ypreds_np = ypreds.cpu().detach().numpy()
+    # repeat for softmax
+    ypreds_softmax_np = ypreds_softmax.cpu().detach().numpy()
+    # place channel dim last
+    ypreds_softmax_np = np.transpose(ypreds_softmax_np, axes=(0, 2, 3, 1))
+    # eliminate channel dim by taking argmax
+    ypreds_np_argmax = np.argmax(ypreds_np, axis=1)
+
+    pred_vmaps = []
+    prob_vmaps = []
+
+    for i in range(preds.shape[0]):
+        ypred_vmap = px2vx(ypreds_np_argmax[i],
+                           px2v_batch[i],
+                           mesh.coordinates)
+
+        yprob_vmap = px2vx(ypreds_softmax_np[i],
+                           px2v_batch[i],
+                           mesh.coordinates)
+
+        vcrd_vmap = px2vx(vcrd_batch[i],
+                          px2v_batch[i],
+                          mesh.coordinates)
+
+        # mask out any dorsal predictions
+        mask = make_mask_vmap(vcrd_vmap, mesh.coordinates)
+
+        ypred_masked_vmap = ypred_vmap[:]
+        ypred_masked_vmap[mask] = 0.0
+
+        yprob_masked_vmap = yprob_vmap[:]
+        yprob_masked_vmap[mask] = 0.0
+
+        pred_vmaps.append(ypred_masked_vmap)
+        prob_vmaps.append(yprob_masked_vmap)
+
+    pred_vmaps = np.stack(pred_vmaps)
+    prob_vmaps = np.stack(prob_vmaps)
+
+    # save
+    if save_dir is not None:
+        save_pred_vmap_fn = f'vmap_pred_{eid}.npy'
+        save_prob_vmap_fn = f'vmap_prob_{eid}.npy'
+
+        with open(f'{save_dir}/{save_pred_vmap_fn}', 'wb') as f:
+            np.save(f, pred_vmaps)
+        with open(f'{save_dir}/{save_prob_vmap_fn}', 'wb') as f:
+            np.save(f, prob_vmaps)
+
+    # make class sums
+    nclasses = 5
+    classes = list(range(nclasses))
+    class_sums = []
+    for c in classes:
+        class_sums.append(np.sum(pred_vmaps == c, axis=0))
+
+    class_sums = np.stack(class_sums)
+
+    if save_dir is not None:
+        class_sum_fn = f'class_sums_{eid}.npy'
+        with open(f'{save_dir}/{class_sum_fn}', 'wb') as f:
+            np.save(f, class_sums)
+
+    ret_dict = {}
+    ret_dict['mesh'] = mesh
+    ret_dict['curv'] = curv
+    ret_dict['pred'] = pred_vmaps
+    ret_dict['prob'] = prob_vmaps
+    ret_dict['df'] = df_batch
+
+    return ret_dict
+
+
+def load_vmaps(
+    eid,
+    anat_dir,
+    vmap_dir,
+    mesh_subdir='surf/lh.inflated',
+    data_subdir='surf/lh.curv',
+    vmap_prefix='vmap_prob_'
+):
+    """
+        Loads a subject's cortical mesh, curv file, and vmap.
+        Returns as a dictionary.
+    """
+    mesh_fp = f'{anat_dir}/{eid}/{mesh_subdir}'
+    surf_fp = f'{anat_dir}/{eid}/{data_subdir}'
+    vmap_fp = f'{vmap_dir}/{vmap_prefix}{eid}.npy'
+
+    mesh = surface.load_surf_mesh(mesh_fp)
+    curv = surface.load_surf_data(surf_fp)
+    vmap = load_numpy(vmap_fp)
+
+    retn = {
+        'mesh': mesh,
+        'curv': curv,
+        'vmap': vmap
+    }
+
+    return retn
+
+
+def segment_ots(
+    eid,
+    anat_dir,
+    vmap_dir,
+    min_size=50,
+    prob_threshold=float(4 / 7),
+    extract_label=2,
+    mesh_subdir='surf/lh.inflated',
+    data_subdir='surf/lh.curv',
+    vmap_prefix='vmap_prob_'
+):
+    """
+        Load a subjects saved probability maps.
+        Extract features of the OTS.
+    """
+    sub_data = load_vmaps(
+        eid,
+        anat_dir,
+        vmap_dir,
+        mesh_subdir=mesh_subdir,
+        data_subdir=data_subdir,
+        vmap_prefix=vmap_prefix
+    )
+    mesh = sub_data['mesh']
+    curv = sub_data['curv']
+    vmap = sub_data['vmap']
+
+    tri = trimesh.Trimesh(
+        vertices=mesh.coordinates,
+        faces=mesh.faces
+    )
+
+    prob = vmap.mean(axis=0)[:, extract_label]
+    idxs = np.array(range(len(prob)))
+    idxs = idxs[prob > prob_threshold]
+    mask_edges = []
+
+    # get only edges in label of interest
+    for e in tri.edges:
+        a, b = e
+        if a in idxs or b in idxs:
+            mask_edges.append(e)
+
+    mask = np.stack(mask_edges)
+    ccs = trimesh.graph.connected_components(mask)  # list<vertices> of conn. components
+    ccs = [cc for cc in ccs if cc.shape[0] >= min_size]  # filter out very small components
+    cc_coordinates = [mesh.coordinates[c] for c in ccs]
+    ranges = [[max(cc[:, 1]), min(cc[:, 1])] for cc in cc_coordinates]
+    sizes = [cc.shape[0] for cc in ccs]
+
+    return sizes, ranges, ccs
+
+
+# ==============================================================================
 # __all__
+
 __all__ = ["is_partition"
            ,"trndata"
            ,"valdata"
