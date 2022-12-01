@@ -24,6 +24,9 @@ image_dir = '/scratch/groups/jyeatman/samjohns-projects/notebooks/ccnn/results/s
 
 eids = pickle.load(open('/scratch/groups/jyeatman/samjohns-projects/notebooks/ccnn/results/eids_to_do.pkl', 'rb'))
 eids.sort()  # guarantees eids are in the same order across parallel jobs
+# 
+eids = pickle.load(open('scratch/groups/jyeatman/samjohns-projects/notebooks/ccnn/results/eids_to_do.pkl', 
+'rb'))
 
 for eid in eids[start:end]:
     sub_data = load_vmaps(eid, anat_load_dir, vmap_load_dir)
