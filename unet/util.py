@@ -921,6 +921,82 @@ def segment_ots(
     return sizes, ranges, ccs
 
 
+def get_gap_prob_mass(
+    vmap,
+    mesh,
+    y_threshold=-40.0,
+    label=4,
+    area=None,
+    weight_by_area=False,
+    normalize_by_area=False
+):
+    """
+        Given a cortical stat map (vmap) of probabilities,
+        calculate the expectation E(Size(Gap)), the expected
+        number of vertices in the OTS gap according to the
+        probability stat map.
+        Optionally, threshold on a y-value, only including vertices
+        posterior to y_threshold in the expectation.
+    """
+    gap_prob = vmap.mean(axis=0)[:, label]
+    mask = mesh.coordinates[:, 1] < y_threshold
+
+    if weight_by_area:
+        assert area is not None  # error handling
+        if normalize_by_area:
+            area_total = area.sum()
+            area = area / area_total
+        gap_prob = gap_prob * area
+
+    gap_prob_threshold = gap_prob[mask]
+    gap_prob_mass = gap_prob_threshold.sum()
+    return gap_prob_mass
+
+
+def extract_gap_prob_mass(
+    eid,
+    anat_dir,
+    vmap_dir,
+    extract_label=4,
+    mesh_subdir='surf/lh.inflated',
+    data_subdir='surf/lh.curv',
+    vmap_prefix='vmap_prob_',
+    weight_by_area=False,
+    normalize_by_area=False,
+    y_threshold=-40.0
+):
+    """
+        Load a subjects saved probability maps.
+        Extract total probability of the OTS posterior gaps.
+    """
+    sub_data = load_vmaps(
+        eid,
+        anat_dir,
+        vmap_dir,
+        mesh_subdir=mesh_subdir,
+        data_subdir=data_subdir,
+        vmap_prefix=vmap_prefix
+    )
+    mesh = sub_data['mesh']
+    vmap = sub_data['vmap']
+    if weight_by_area:
+        area = surface.load_surf_data(f'{anat_dir}/{eid}/surf/lh.area')
+    else:
+        area = None
+
+    gap_prob_mass = get_gap_prob_mass(
+        vmap,
+        mesh,
+        area=area,
+        label=extract_label,
+        weight_by_area=weight_by_area,
+        normalize_by_area=normalize_by_area,
+        y_threshold=y_threshold
+    )
+
+    return gap_prob_mass
+
+
 # ==============================================================================
 # __all__
 
