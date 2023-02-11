@@ -998,8 +998,9 @@ def make_subject_images(mesh, curv, parc, extra_channels_dict=None,
     return_dict['angles'] = angles
 
     # add extra channels
-    for key, value in extra_channel_figs.items():
-        return_dict[key] = value
+    if extra_channels_dict is not None:
+        for key, value in extra_channel_figs.items():
+            return_dict[key] = value
 
     return return_dict
 

@@ -657,8 +657,7 @@ def model_eval(
     df_metadata,
     df_idxs,
     save_dir,
-    split_size=35,
-
+    split_size=35
 ):
     """
         Do a forward pass on a large dataset with multiple samples
