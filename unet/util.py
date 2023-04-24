@@ -725,6 +725,9 @@ def batch_px2v(
     pcrd_colname = 'Filename_p'
     px2v_fns = list(df_batch[px2v_colname])
     pcrd_fns = list(df_batch[pcrd_colname])
+    print(px2v_fns)
+    print(pcrd_fns)
+
     eid = str(df_batch['EID'].iloc[0])
 
     # load px2v maps
