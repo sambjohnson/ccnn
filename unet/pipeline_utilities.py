@@ -1044,6 +1044,10 @@ def process_figs(img_dict, ns=256, mode=None, resample=None):
     elif mode == 'OTS-MFS-GAP':
         PROCESS_FUNCTIONS['parc'] = lambda img: \
             process_parc_img(img, pal=PAL_OTS_MFS_GAP, resample=resample)
+    elif mode == 'HBN-normalize':
+        PROCESS_FUNCTIONS['parc'] = lambda img: \
+            process_parc_img(img, pal=PAL/255.0, resample=resample)
+
     DEFAULT_CHANNEL_FUNCTION = process_curv_img
     npy_dict = {}
     npy_dict['angles'] = img_dict['angles']
